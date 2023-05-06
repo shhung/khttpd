@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "http_server.h": "c",
+        "random": "c"
+    }
+}
