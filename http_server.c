@@ -69,7 +69,7 @@ static int http_server_send(struct socket *sock, const char *buf, size_t size)
         };
         int length = kernel_sendmsg(sock, &msg, &iov, 1, iov.iov_len);
         if (length < 0) {
-            pr_err("write error: %d\n", length);
+            TRACE(send_err);
             break;
         }
         done += length;
@@ -80,14 +80,16 @@ static int http_server_send(struct socket *sock, const char *buf, size_t size)
 static int http_server_response(struct http_request *request, int keep_alive)
 {
     char *response;
+    int ret;
 
-    pr_info("requested_url = %s\n", request->request_url);
     if (request->method != HTTP_GET)
         response = keep_alive ? HTTP_RESPONSE_501_KEEPALIVE : HTTP_RESPONSE_501;
     else
         response = keep_alive ? HTTP_RESPONSE_200_KEEPALIVE_DUMMY
                               : HTTP_RESPONSE_200_DUMMY;
-    http_server_send(request->socket, response, strlen(response));
+    ret = http_server_send(request->socket, response, strlen(response));
+    if (ret > 0)
+        TRACE(sendmsg);
     return 0;
 }
 
@@ -167,7 +169,7 @@ static void http_server_worker(struct work_struct *work)
 
     buf = kzalloc(RECV_BUFFER_SIZE, GFP_KERNEL);
     if (!buf) {
-        pr_err("can't allocate memory!\n");
+        TRACE(kmalloc_err);
         return;
     }
 
@@ -180,16 +182,18 @@ static void http_server_worker(struct work_struct *work)
         ret = http_server_recv(socket, buf, RECV_BUFFER_SIZE - 1);
         if (ret <= 0) {
             if (ret)
-                pr_err("recv error: %d\n", ret);
+                TRACE(recv_err);
             break;
-        }
+        } else
+            TRACE(recvmsg);
+
         http_parser_execute(&parser, &setting, buf, ret);
         if (request.complete && !http_should_keep_alive(&parser))
             break;
         memset(buf, 0, RECV_BUFFER_SIZE);
     }
     kernel_sock_shutdown(socket, SHUT_RDWR);
-    sock_release(socket);
+    // sock_release(socket);
     kfree(buf);
 }
 
@@ -236,12 +240,12 @@ int http_server_daemon(void *arg)
         if (err < 0) {
             if (signal_pending(current))
                 break;
-            pr_err("kernel_accept() error: %d\n", err);
+            TRACE(accept_err);
             continue;
         }
 
         if (unlikely(!(work = create_work(socket)))) {
-            pr_err("can't create more worker process\n");
+            TRACE(cthread_err);
             kernel_sock_shutdown(socket, SHUT_RDWR);
             sock_release(socket);
             continue;
